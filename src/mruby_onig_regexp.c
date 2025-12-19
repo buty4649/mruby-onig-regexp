@@ -60,6 +60,9 @@ static mrb_sym sym_dollar_plus;        // $+
 static mrb_sym sym_dollar_semicolon;   // $;
 static mrb_sym sym_dollar_numbers[10]; // $0 to $9
 
+static struct RClass* cls_onig_regexp;
+static struct RClass* cls_regexp = NULL;
+
 static const char utf8len_codepage[256] =
 {
   1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
@@ -201,11 +204,14 @@ onig_match_common(mrb_state* mrb, OnigRegex reg, mrb_value match_value, mrb_valu
     mrb_raise(mrb, E_REGEXP_ERROR, err);
   }
 
-  struct RObject* const cls = (struct RObject*)mrb_class_get_id(mrb, MRB_SYM(OnigRegexp));
-  mrb_obj_iv_set(mrb, cls, MRB_IVSYM(last_match), MISMATCH_NIL_OR(match_value));
+  mrb_obj_iv_set(mrb, (struct RObject*)cls_onig_regexp, MRB_IVSYM(last_match), MISMATCH_NIL_OR(match_value));
 
-  if (mrb_class_get_id(mrb, MRB_SYM(Regexp)) == (struct RClass*)cls &&
-    mrb_bool(mrb_obj_iv_get(mrb, (struct RObject*)cls, MRB_IVSYM(set_global_variables))))
+  if (cls_regexp == NULL) {
+    cls_regexp = mrb_class_get_id(mrb, MRB_SYM(Regexp));
+  }
+
+  if (cls_regexp == cls_onig_regexp &&
+    mrb_bool(mrb_obj_iv_get(mrb, (struct RObject*)cls_onig_regexp, MRB_IVSYM(set_global_variables))))
   {
     mrb_gv_set(mrb, sym_dollar_tilde,
                MISMATCH_NIL_OR(match_value));
@@ -227,8 +233,10 @@ onig_match_common(mrb_state* mrb, OnigRegex reg, mrb_value match_value, mrb_valu
     for (; idx < 10; ++idx) {
       if (idx_max > idx) {
         mrb_gv_set(mrb, sym_dollar_numbers[idx], mrb_funcall_id(mrb, match_value, MRB_OPSYM(aref), 1, mrb_fixnum_value(idx)));
-      } else {
+      } else if(!mrb_nil_p(mrb_gv_get(mrb, sym_dollar_numbers[idx]))) {
         mrb_gv_remove(mrb, sym_dollar_numbers[idx]);
+      } else {
+        break;
       }
     }
   }
@@ -1003,6 +1011,8 @@ string_split(mrb_state* mrb, mrb_value self) {
   mrb_int last_null = 0;
 
   if (argc == 2) { i = 1; }
+  struct RObject* const cls = (struct RObject*)mrb_class_get_id(mrb, MRB_SYM(OnigRegexp));
+  mrb_obj_iv_set(mrb, (struct RObject*)cls, MRB_IVSYM(set_global_variables), mrb_false_value());
   while ((end = onig_match_common(mrb, reg, match_value, self, start)) >= 0) {
     if (start == end && match->beg[0] == match->end[0]) {
       if (!ptr) {
@@ -1207,6 +1217,7 @@ mrb_mruby_onig_regexp_gem_init(mrb_state* mrb) {
   }
 
   clazz = mrb_define_class(mrb, "OnigRegexp", mrb->object_class);
+  cls_onig_regexp = clazz;
   MRB_SET_INSTANCE_TT(clazz, MRB_TT_DATA);
 
   // enable global variables setting in onig_match_common by default
